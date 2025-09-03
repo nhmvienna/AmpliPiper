@@ -95,7 +95,7 @@ mamba install \
     -y \
     -c conda-forge \
     -c bioconda \
-    matplotlib biopython edlib cairosvg pymsaviz ete3 beautifulsoup4 scipy scikit-learn >>${BASEDIR}/envs/logs/setup.log 2>&1
+    matplotlib biopython edlib cairosvg pymsaviz ete3 beautifulsoup4 scipy scikit-learn pandas >>${BASEDIR}/envs/logs/setup.log 2>&1
 
 ${BASEDIR}/envs/python_dependencies/bin/pip3 install --no-cache-dir numpy pandas >>${BASEDIR}/envs/logs/setup.log 2>&1
 echo "Python dependencies installation done"

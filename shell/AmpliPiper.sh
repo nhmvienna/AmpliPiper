@@ -1,55 +1,122 @@
 #!/bin/bash
 
+#===============================================================================
+# AmpliPiper - Amplicon Sequencing Analysis Pipeline
+#===============================================================================
+# 
+# DESCRIPTION:
+#   AmpliPiper is a comprehensive pipeline for processing amplicon sequencing data
+#   from raw FASTQ files to phylogenetic trees and species identification.
+#
+# WORKFLOW:
+#   1. Quality filtering and demultiplexing by locus
+#   2. Consensus sequence reconstruction with AmpliconSorter
+#   3. Multiple sequence alignment with MAFFT
+#   4. Phylogenetic reconstruction with IQ-TREE
+#   5. Species identification via BOLD/BLAST APIs
+#   6. Species delimitation with ASAP
+#   7. HTML report generation
+#
+# DEPENDENCIES:
+#   - Conda environments (automatically installed if missing)
+#   - Python dependencies, R packages, bioinformatics tools
+#
+# AUTHORS: Astra Bertelli, Sonja Steindl & Martin Kapun
+# VERSION: 1.1
+# LICENSE: GPL3
+#===============================================================================
+
 ## Usage function
 usage() {
-    echo "Usage: HAPLOTYPES -s, --samples SAMPLES_CSV -p, --primers PRIMERS_CSV -o,--output OUTPUT_FOLDER  [-q, --quality QUALITY] 
+    echo "Usage: AmpliPiper -s, --samples SAMPLES_CSV -p, --primers PRIMERS_CSV -o,--output OUTPUT_FOLDER  [-q, --quality QUALITY] 
     [-n, --nreads NUMBER_OF_READS] [-t, --threads NUMBER_OF_THREADS] [-f,--force] [-b,--blast]
 
+    AmpliPiper is a comprehensive pipeline for amplicon sequencing analysis, from raw 
+    FASTQ files to phylogenetic trees and species identification.
+
     REQUIRED ARGUMENTS:
-    -o | --output: Provide the path to the output folder
-    -p | --primers: Provide the path to a csv file that contains the IDs, the forward and the reverse sequences of the primers and the expected fragment size. Find an example in the section dedicated to demultiplexing.
-    -s | --samples: Provide the path to a csv file that contains the names (without extension) and the path of the fastq files containing the raw reads that will be analysed
+    -o | --output        : Path to the output folder where all results will be stored
+    -p | --primers       : CSV file containing primer information (ID, forward_seq, reverse_seq, expected_size)
+                          Example format: ID,Forward,Reverse,Size
+                                         COX1,TTGATTTTTTGGTCATCCAGA,TAAACTTCAGGGTGACCAAAA,658
+    -s | --samples       : CSV file containing sample information (ID, fastq_file_path)
+                          Example format: ID,Path
+                                         Sample1,/path/to/sample1.fastq.gz
+                                         Sample2,/path/to/sample2.fastq
     
     OPTIONAL ARGUMENTS:
-    -b | --blast: Use BLAST instead of BOLD for species identification by setting this parameter and by providing an email address for using NCBI Entrez (default: disabled)
-    -c | --similar_consensus: Change the minimum similarity threshold (in percent) of amplicon_sorter. If the similarity of two clusters are smaller or equal to the threshold, they are considered separartely otherwise they are collapsed prior to consensus reconstruction (default: 96)
-    -e | --exclude: Provide a text file with samples and loci to exclude from the analyses. Each row contains one comma-separated sample-ID and locus-ID to be excluded.
-    -f | --force: Force overwriting the previous ouput folder (default: Cowardly refusing to overwrite)
-    -g | --outgroup: Define an outgroup sample or a comma,separated list of outgroup samples (need to match the IDs in --samples)
-    -i | --partition: Use partitionmodel for iqtree with combined dataset (default: disabled)
-    -k | --kthreshold: Define the threshold k for the maximum allowed mismatches for the primer alignment during demultiplexing (default: 0.05)
-    -m | --minreads: Set the minimum number of reads required for the reconstruction of consensus sequences; If there are not enough reads, the locus will be ignored (default: 100)
-    -n | --nreads: Provide the absolute number or the percentage of top quality reads you want the pipeline to take into account for consensus sequences generation and variant calling (default is 500)
-    -q | --quality: Provide an integer that represent the minimum quality which the reads will be filtered for (default is 10)
-    -r | --sizerange: Define the allowed size buffer around the expected locus length as defined in the primers file (default: 100)
-    -t | --threads: Number of threads the program will be using (default: 10)
-    -w | --nowatermark: Remove the watermark from the tree figures
-    -y | --freqthreshold: Retain consensus sequences for further analyses which are supported by raw reads, whose frequency in the total pool of reads is larger or equal to this threshold (default: 0.1).
+    -b | --blast         : Email address for BLAST API access (enables BLAST instead of BOLD for species ID)
+                          Example: --blast your.email@institution.edu (default: uses BOLD API)
+    -c | --similar_consensus : Similarity threshold (%) for AmpliconSorter consensus clustering
+                          Lower values = more clusters, higher values = fewer clusters (default: 96)
+    -e | --exclude       : Text file listing sample-locus combinations to exclude from analysis
+                          Format: one line per exclusion as SampleID,LocusID
+    -f | --force         : Force overwrite of existing output directory (default: abort if exists)
+    -g | --outgroup      : Sample ID(s) to use as outgroup for phylogenetic trees
+                          Multiple outgroups: --outgroup Sample1,Sample2,Sample3
+    -i | --partition     : Use partitioned substitution models for concatenated IQ-TREE analysis
+                          Improves accuracy when combining multiple loci (default: single model)
+    -k | --kthreshold    : Maximum mismatch rate for primer alignment during demultiplexing
+                          Range 0.0-1.0, higher values = more permissive matching (default: 0.05)
+    -m | --minreads      : Minimum number of reads required for consensus sequence reconstruction
+                          Loci with fewer reads are excluded from analysis (default: 100)
+    -n | --nreads        : Maximum number of top-quality reads used for consensus generation
+                          Can be absolute number (e.g., 500) or percentage (e.g., 80%) (default: 500)
+    -q | --quality       : Minimum Phred base quality score for read filtering
+                          Reads with lower quality are discarded (default: 7)
+    -r | --sizerange     : Allowed size deviation (bp) from expected amplicon length
+                          Amplicons outside expected_size ± sizerange are discarded (default: 100)
+    -t | --threads       : Number of CPU threads for parallel processing (default: 10)
+    -w | --nowatermark   : Remove AmpliPiper watermark from phylogenetic tree figures
+    -y | --freqthreshold : Minimum frequency threshold for consensus sequence retention
+                          Range 0.0-1.0, sequences below this frequency are filtered out (default: 0.1)
+
+    EXAMPLES:
+    # Basic run with required parameters only:
+    AmpliPiper -s samples.csv -p primers.csv -o results_folder
+
+    # Advanced run with custom parameters:
+    AmpliPiper -s samples.csv -p primers.csv -o results_folder \\
+              -q 15 -n 1000 -t 20 -c 95 -f --blast your.email@uni.edu
+
+    # Run with outgroup and partitioned analysis:
+    AmpliPiper -s samples.csv -p primers.csv -o results_folder \\
+              -g Reference_sample -i -y 0.05
 
   
-  Input HAPLOTYPES -h,--help to show the help message"
+  Input AmpliPiper -h,--help to show this help message"
     exit 1
 }
 
+#===============================================================================
+# PARAMETER INITIALIZATION AND VALIDATION
+#===============================================================================
+
 ## Initialize variables with default values
-quality=7           # -q
-similarconsensus=96 # -c
-nreads=500          # -n
-sizerange=100       # -r
-minreads=100        # -m
-threads=10          # -t
-kthres=0.05         # -k
-force="no"          # -f
-blast="no"          # -b
-partition="no"      # -i
-outgroup="no"       # -g
-freqthreshold=0.1   # -y
+quality=7           # -q: Minimum base quality for filtering
+similarconsensus=96 # -c: Similarity threshold for consensus clustering (%)
+nreads=500          # -n: Number of top quality reads for consensus
+sizerange=100       # -r: Allowed size buffer around expected fragment length
+minreads=100        # -m: Minimum reads required for consensus reconstruction
+threads=10          # -t: Number of parallel threads
+kthres=0.05         # -k: Maximum mismatches for primer alignment
+force="no"          # -f: Force overwrite existing output
+blast="no"          # -b: Use BLAST instead of BOLD for species ID
+partition="no"      # -i: Use partition model for concatenated phylogeny
+outgroup="no"       # -g: Outgroup sample(s) for phylogenetic analysis
+freqthreshold=0.1   # -y: Minimum frequency threshold for consensus sequences
 
 os="$(uname -s)"
 
-## Find basedir
+#===============================================================================
+# DIRECTORY SETUP AND DEPENDENCY CHECKS
+#===============================================================================
+
+## Find basedir - determine the base directory of the pipeline
 tmp=$(dirname $0)
 wd=${tmp%/*} ######## <- wd is now the base directory below the shell/ folder
+
+## Clean up previous log directory and create fresh one
 
 if
     [[ -d $wd/logs ]] \
@@ -59,7 +126,7 @@ then
     mkdir $wd/logs
 fi
 
-## Test if software already installed if not, start installation
+## Test if software already installed, if not start installation
 if
     [[ ! -d $wd/envs ]] \
         ;
@@ -67,7 +134,7 @@ then
     bash $wd/shell/setup.sh
 fi
 
-## Test if dependencies correctly installed
+## Test if dependencies correctly installed - check for installation errors
 if
     [[ -f $wd/logs/dep.err ]] \
         ;
@@ -83,7 +150,7 @@ then
     exit 1
 fi
 
-## Test if software correctly installed
+## Test if software correctly installed - check for software package errors
 if
     [[ -f $wd/envs/logs/setup.err ]] \
         ;
@@ -99,10 +166,13 @@ then
     exit 1
 fi
 
-## whereis conda <- initiate conda to load software
+## Initialize conda environment for loading software packages
 eval "$(conda shell.bash hook)"
 
-# Loop through the commandline arguments
+#===============================================================================
+# COMMAND LINE ARGUMENT PARSING
+#===============================================================================
+# Parse all command line options and store in variables for later use
 while
     [[ $# -gt 0 ]] \
         ;
@@ -112,71 +182,71 @@ do
         usage
         ;;
     -b | --blast)
-        blast="$2"
+        blast="$2"  # Email address for BLAST API access
         shift 2
         ;;
     -c | --similar_consensus)
-        similarconsensus="$2"
+        similarconsensus="$2"  # Similarity threshold for consensus clustering
         shift 2
         ;;
     -e | --exclude)
-        exclude="$2"
+        exclude="$2"  # File with sample-locus combinations to exclude
         shift 2
         ;;
     -f | --force)
-        force="yes"
+        force="yes"  # Force overwrite existing output directory
         shift 1
         ;;
     -g | --outgroup)
-        outgroup="$2"
+        outgroup="$2"  # Outgroup sample(s) for phylogenetic rooting
         shift 2
         ;;
     -i | --partition)
-        partition="yes"
+        partition="yes"  # Use partitioned model for concatenated analysis
         shift 1
         ;;
     -k | --kthreshold)
-        kthres="$2"
+        kthres="$2"  # Primer alignment mismatch threshold
         shift 2
         ;;
     -m | --minreads)
-        minreads="$2"
+        minreads="$2"  # Minimum reads required for consensus
         shift 2
         ;;
     -n | --nreads)
-        nreads="$2"
+        nreads="$2"  # Number of reads for consensus generation
         shift 2
         ;;
     -o | --output)
-        output="$2"
+        output="$2"  # Output directory path
         shift 2
         ;;
     -p | --primers)
-        primers="$2"
+        primers="$2"  # CSV file with primer information
         shift 2
         ;;
     -q | --quality)
-        quality="$2"
+        quality="$2"  # Minimum base quality threshold
         shift 2
         ;;
     -r | --sizerange)
-        sizerange="$2"
+        sizerange="$2"  # Allowed size deviation from expected fragment length
         shift 2
         ;;
     -s | --samples)
-        samples="$2"
+        samples="$2"  # CSV file with sample information
         shift 2
         ;;
     -t | --threads)
-        threads="$2"
+        threads="$2"  # Number of parallel processing threads
         shift 2
         ;;
     -y | --freqthreshold)
-        freqthreshold="$2"
+        freqthreshold="$2"  # Frequency threshold for consensus sequences
         shift 2
         ;;
     -w | --nowatermark)
-        nowatermark="yes"
+        nowatermark="yes"  # Remove watermark from phylogenetic trees
         shift 2
         ;;
     *)
@@ -186,7 +256,11 @@ do
     esac
 done
 
-## Is the sample input file provided?
+#===============================================================================
+# INPUT VALIDATION AND PREPROCESSING
+#===============================================================================
+
+## Validate that required sample input file is provided
 if
     [[ -z "${samples}" ]] \
         ;
@@ -195,7 +269,7 @@ then
     usage
 fi
 
-## Is the primer input file provided?
+## Validate that required primer input file is provided
 if
     [[ -z "${primers}" ]] \
         ;
@@ -204,7 +278,7 @@ then
     usage
 fi
 
-## Is the path to the outputfolder defined?
+## Validate that required output directory path is defined
 if
     [[ -z "${output}" ]] \
         ;
@@ -213,17 +287,18 @@ then
     usage
 fi
 
-## force overwrite pre-existing output folder?
+## Handle force overwrite option for pre-existing output folder
 if
     [[ -d "${output}" ]] &&
         [[ ${force} == "yes" ]] \
         ;
 then
-    rm -rf ${output}
-    rm -rf ${output}
+    rm -rf ${output}  # Remove existing directory and its contents
+    rm -rf ${output}  # Double removal to ensure cleanup
 
 fi
 
+## Check if output directory exists and force flag not set
 if
     [[ -d "${output}" ]] \
         ;
@@ -232,37 +307,36 @@ then
     usage
 fi
 
-## remove watermark in phylogenetic trees if this is REALLY wanted
+## Configure watermark setting for phylogenetic tree plots
 if
     [[ ${nowatermark} = "yes" ]] \
         ;
 then
-    WM="NO"
+    WM="NO"  # Disable watermark
 else
-    WM="YES"
+    WM="YES"  # Enable watermark (default)
 fi
 
-###
-
+## Store parameter settings as comma-separated string for later use
 parametersettings="${quality},${similarconsensus},${nreads},${sizerange},${minreads},${threads},${kthres},${force},${blast},${partition},${outgroup}"
-###
 
-## make sure the EOL character is \n and NOT \r\n in the samples and primers files ;-)
+## Preprocess input files to ensure correct formatting
+# Convert Windows line endings (\r\n) to Unix format (\n)
 ${wd}/envs/python_dependencies/bin/sed -i 's/\r$//' ${samples}
 ${wd}/envs/python_dependencies/bin/sed -i 's/\r$//' ${primers}
 
-## remove spaces
+# Remove any spaces that might cause parsing issues
 ${wd}/envs/python_dependencies/bin/sed -i 's/ //g' ${samples}
 ${wd}/envs/python_dependencies/bin/sed -i 's/ //g' ${primers}
 
-## remove empty lines
+# Remove empty lines that might interfere with processing
 ${wd}/envs/python_dependencies/bin/sed -i '/^$/d' ${samples}
 ${wd}/envs/python_dependencies/bin/sed -i '/^$/d' ${primers}
 
-# Test if FASTQ input files in samples file do exist
+# Validate that all FASTQ input files specified in samples file actually exist
 while IFS=$"," read -r samplename file; do
 
-    ## skip header
+    ## Skip header row
     if
         [[ ${samplename} == "ID" ]] \
             ;
@@ -270,6 +344,7 @@ while IFS=$"," read -r samplename file; do
         continue
     fi
 
+    ## Check if the specified FASTQ file exists
     if
         [[ ! -f ${file} ]] \
             ;
@@ -281,31 +356,38 @@ while IFS=$"," read -r samplename file; do
 
 done <${samples}
 
-## fill array for samples/loci to exclude
+## Parse exclusion file and fill array for samples/loci to exclude from analysis
 declare -a EXCLUDE=()
 if
     [[ ! -z "${exclude}" ]] \
         ;
 then
+    # Read exclude file and create array of sample-locus combinations
     mapfile -t EXCLUDE < <(awk -F',' '{print $1$2}' "${exclude}")
 fi
 
-## set SampleID Search engine:
-
+## Set Search Engine variable for species identification
 if [[ ${blast} != "no" ]]; then
-    SE="BLAST"
+    SE="BLAST"  # Use BLAST API for species identification
 else
-    SE="BOLD"
+    SE="BOLD"   # Use BOLD API for species identification (default)
 fi
 
-#################### Start executing if all parameters set and input files available
+#===============================================================================
+# PIPELINE EXECUTION BEGINS
+#===============================================================================
 now=$(date +%Y-%m-%d' '%H:%M:%S)
 echo "+++++++++ Program started at ${now} +++++++++"
 
-## test similiarity among primers
+#===============================================================================
+# STEP 1: PRIMER SIMILARITY ANALYSIS
+#===============================================================================
+# Analyze primer sequences for potential cross-reactivity and similarity
+
+## Test primer sequence similarity
 echo "***** Test primer sequence similarity *****"
 
-## make output folder structure
+## Create output folder structure for the entire pipeline
 mkdir -p ${output}/results/summary/primers
 mkdir -p ${output}/data/raw
 mkdir -p ${output}/log/demulti
@@ -314,6 +396,7 @@ mkdir -p ${output}/shell/demult1
 mkdir -p ${output}/log/summary
 mkdir ${output}/data/filtered
 
+# Activate Python environment and run primer comparison analysis
 conda activate ${wd}/envs/python_dependencies
 
 ${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/CompPrimers.py \
@@ -325,11 +408,25 @@ conda deactivate
 
 echo "finished"
 
-## count number of loci in primers file:
+## Count total number of loci specified in primers file for downstream processing
 LOCI=$(awk '!/^ID,/' ${primers} | wc -l)
 
-## loop through all input files in raw data folder and store filtered files in new folder
+#===============================================================================
+# STEP 2: QUALITY FILTERING AND DEMULTIPLEXING
+#===============================================================================
+# Process raw FASTQ files through three main stages:
+# 1. Copy raw FASTQ files to output directory (compress if needed)
+# 2. Filter reads by minimum base quality using Chopper
+# 3. Demultiplex reads by locus using primer sequences with fuzzy matching
+#
+# This step generates individual shell scripts for each sample to enable 
+# parallel processing across multiple samples simultaneously.
+
+## Process all input files: copy, filter, and demultiplex by locus
 echo "***** Copying files, starting filtering and demultiplexing by locus *****"
+
+## Generate individual shell scripts for each sample to enable parallel processing
+# Each script handles: file copying/compression, quality filtering, and demultiplexing
 
 while IFS=$"," read -r samplename file; do
 
@@ -345,11 +442,13 @@ while IFS=$"," read -r samplename file; do
     
     eval \"\$(conda shell.bash hook)\"
 
-    ## copy raw data to new output folder
+    ## Copy raw data to output folder, compressing if necessary
 
-    if [[ ${file} == "\*.gz$" ]]; then
+    if [[ ${file} == *.gz ]]; then
+        # File already compressed, copy directly
         cp -n ${file} ${output}/data/raw/${samplename}.fastq.gz
     else
+        # Compress uncompressed FASTQ file during copy
         conda activate ${wd}/envs/chopper
         pigz -c ${file} > ${output}/data/raw/${samplename}.fastq.gz
         conda deactivate
@@ -367,7 +466,7 @@ while IFS=$"," read -r samplename file; do
     mkdir ${output}/data/demultiplexed/${samplename}
 
     conda activate ${wd}/envs/python_dependencies
-    ${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/DemultFastq.py \
+    ${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/DemultFastqAdvanced.py \
         -i ${output}/data/filtered/${samplename}-filt.fastq.gz \
         -p $primers \
         -o ${output}/data/demultiplexed/${samplename} \
@@ -391,6 +490,17 @@ conda deactivate
 
 ## Consensus sequence reconstruction
 echo "***** Files demultiplexed, starting consensus haplotype reconstruction *****"
+
+#===============================================================================
+# STEP 3: CONSENSUS SEQUENCE RECONSTRUCTION WITH AMPLICONSORTER
+#===============================================================================
+# Generate consensus sequences from demultiplexed reads using AmpliconSorter:
+# - Groups similar reads into clusters based on similarity threshold
+# - Reconstructs consensus sequences for each cluster
+# - Filters clusters by minimum read count and frequency thresholds
+# - Outputs FASTA files with consensus sequences for downstream analysis
+#
+# Each sample-locus combination is processed independently in parallel.
 
 mkdir -p ${output}/results/consensus_seqs
 mkdir -p ${output}/log/ampliconsorter
@@ -429,13 +539,14 @@ while IFS=$"," read -r samplename file; do
         mkdir -p ${output}/results/consensus_seqs/${samplename}
         cd ${output}/results/consensus_seqs/${samplename}
 
-        ##AmpliconSorter consensus
+        ## AmpliconSorter consensus sequence reconstruction
         conda activate ${wd}/envs/python_dependencies
-        ## test if OS is Mac
+        ## Adjust AmpliconSorter parameters for macOS compatibility
         if
             [[ ${os} == "Darwin" ]] \
                 ;
         then
+            # macOS version with -mac flag for compatibility
             amplicon_sorter.py \
                 -i ${output}/data/demultiplexed/${samplename}/${primername}.fastq \
                 -np 1 \
@@ -445,6 +556,7 @@ while IFS=$"," read -r samplename file; do
                 -o \${SamPrim} \
             >> ${output}/log/ampliconsorter/${samplename}_${primername}_AS.log 2>&1
         else
+            # Linux/Unix version without -mac flag
             amplicon_sorter.py \
                 -i ${output}/data/demultiplexed/${samplename}/${primername}.fastq \
                 -np 1 \
@@ -465,6 +577,16 @@ echo "will cite" | parallel --citation >/dev/null 2>&1
 parallel --bar -j${threads} bash ::: ${output}/shell/demult2/*.sh
 conda deactivate
 
+#===============================================================================
+# STEP 4: SUMMARY STATISTICS AND HAPLOTYPE SELECTION
+#===============================================================================
+# Process AmpliconSorter outputs to generate summary statistics and select
+# representative haplotypes for downstream analysis:
+# 1. Parse AmpliconSorter output files to extract read counts and frequencies
+# 2. Generate summary CSV with statistics for all sample-locus combinations
+# 3. Select consensus sequences meeting frequency thresholds
+# 4. Create visualization of missing data patterns across samples and loci
+
 ## make CSV summary
 echo "***** Summarize Ampliconsorter output *****"
 
@@ -476,7 +598,7 @@ ${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/ParseSummary.py \
 
 conda activate ${wd}/envs/python_dependencies
 
-## choose haplotypes
+## Select consensus sequences meeting frequency and read count thresholds
 ${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/ChooseCons.py \
     --input ${output}/results/summary/summary.csv \
     --path ${output}/results/consensus_seqs \
@@ -486,9 +608,10 @@ ${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/ChooseCons.py \
 
 conda deactivate
 
+## Update summary file with ploidy information 
 mv ${output}/results/summary/summary.csv.ploidy ${output}/results/summary/summary.csv
 
-## Plot Heatmap with missing data
+## Generate heatmap visualization of missing data patterns across samples and loci
 conda activate ${wd}/envs/R
 ${wd}/envs/R/bin/Rscript ${wd}/scripts/MissingDataHeatmap.r \
     ${output}/results/summary/summary.csv \
@@ -496,6 +619,15 @@ ${wd}/envs/R/bin/Rscript ${wd}/scripts/MissingDataHeatmap.r \
 conda deactivate
 
 echo " finished"
+
+#===============================================================================
+# STEP 5: MULTIPLE SEQUENCE ALIGNMENT
+#===============================================================================
+# Align consensus sequences for each locus using MAFFT:
+# - Uses accurate alignment mode with direction adjustment
+# - Processes each locus independently 
+# - Requires minimum of 4 sequences per locus for meaningful alignment
+# - Outputs aligned FASTA files for phylogenetic analysis
 
 ## align haplotypes
 echo "***** align haplotypes *****"
@@ -512,7 +644,7 @@ while IFS=$"," read -r primername fwd rev size; do
         continue
     fi
 
-    ## skip if less than four aligned sequences
+    ## Skip if FASTA file doesn't exist for this locus
     if
         [[ ! -f ${output}/results/haplotypes/${primername}/${primername}.fasta ]] \
             ;
@@ -520,6 +652,7 @@ while IFS=$"," read -r primername fwd rev size; do
         continue
     fi
 
+    ## Skip if insufficient sequences for meaningful phylogenetic analysis (need ≥4)
     if
         [[ $(grep "^>" ${output}/results/haplotypes/${primername}/${primername}.fasta | wc -l) -lt 4 ]] \
             ;
@@ -527,7 +660,7 @@ while IFS=$"," read -r primername fwd rev size; do
         continue
     fi
 
-    ## mafft alignment
+    ## Perform multiple sequence alignment using MAFFT with direction adjustment
     conda activate ${wd}/envs/mafft
 
     mafft \
@@ -544,19 +677,37 @@ while IFS=$"," read -r primername fwd rev size; do
 
 done <${primers}
 
+#===============================================================================
+# STEP 6: GENETIC DISTANCE CALCULATIONS
+#===============================================================================
+# Calculate pairwise genetic distances between haplotypes using R:
+# - Computes sequence divergence metrics for each aligned locus
+# - Generates distance matrices for phylogenetic analysis
+# - Outputs summary statistics of genetic diversity
+
 echo "***** Calculate Genetic Distances *****"
 
 conda activate ${wd}/envs/R
 
 ${wd}/envs/R/bin/Rscript ${wd}/scripts/GeneticDist.r \
-    ${output}/results/haplotypes \
+    ${output}/results/haplotypes 0.01 ${outgroup} \
     >>${output}/log/ampliconsorter/GeneticDistance_AS.log 2>&1
 
 echo "finished"
 
 conda deactivate
 
-## Species identification with BOLD
+#===============================================================================
+# STEP 7: SPECIES IDENTIFICATION
+#===============================================================================
+# Identify species for standard barcoding loci (COX1, ITS, MATK_RBCL) using:
+# - BOLD API (default): Queries Barcode of Life database
+# - BLAST API (optional): Queries NCBI GenBank database
+# 
+# Only processes recognized barcoding markers that are present in the dataset.
+# Results include taxonomic assignments with confidence scores and metadata.
+
+## Species identification with BOLD/BLAST
 mkdir ${output}/log/SpecID
 PRINT=0
 
@@ -606,16 +757,25 @@ while IFS=$"," read -r primername fwd rev size; do
 
 done <${primers}
 
-## test if IDs found for samples for any marker, perferably COX1
+## Determine the best locus for species identification (preferentially COX1)
+# Search for species identification results in order of preference: COX1 > ITS > MATK_RBCL
 for locus in COX1 ITS MATK_RBCL; do
     if
         [[ -f ${output}/results/SpeciesID/${SE}/${locus}/summarized_outputs/final.csv ]] \
             ;
     then
-        ID=${locus}
+        ID=${locus}  # Store the locus with available species IDs for tree labeling
         break
     fi
 done
+
+#===============================================================================
+# STEP 8: MULTI-LOCUS CONCATENATION
+#===============================================================================
+# Concatenate alignments from multiple loci for combined phylogenetic analysis:
+# - Only performed when multiple loci are present and frequency threshold > 0
+# - Creates concatenated alignment with partition information
+# - Enables analysis of phylogenetic signal across multiple markers
 
 if [[ ${LOCI} -gt 1 && $(ls -l ${output}/results/haplotypes/*/*_aln.fasta | wc -l) -gt 1 && ${freqthreshold} != "0" && ${freqthreshold} != "0.0" && ${freqthreshold} != "0.00" ]]; then
 
@@ -633,16 +793,27 @@ if [[ ${LOCI} -gt 1 && $(ls -l ${output}/results/haplotypes/*/*_aln.fasta | wc -
     echo "finished"
 fi
 
+#===============================================================================
+# STEP 9: PHYLOGENETIC RECONSTRUCTION
+#===============================================================================
+# Reconstruct maximum likelihood phylogenetic trees using IQ-TREE:
+# - Individual trees for each locus (requires ≥4 sequences)
+# - Optional concatenated tree across all loci
+# - Bootstrap support values (1000 replicates)
+# - Tree visualization with R/ggplot2
+# - Integration of species names from BOLD/BLAST if available
+
 ## reconstruct trees if > 3 haplotypes in input
 echo "***** reconstruct ML trees per locus *****"
 
 mkdir -p ${output}/log/tree
 
-## adjust WIDTH to account for longer name if frequencies are also printed at freqthreshold == 0
+## Adjust tree plot dimensions based on whether frequency information is displayed
+# When freqthreshold=0, frequencies are shown in sequence names, requiring wider plots
 if [[ ${freqthreshold} == 0 ]]; then
-    WIDTH=10
+    WIDTH=10  # Wider plot to accommodate frequency information
 else
-    WIDTH=8
+    WIDTH=8   # Standard width for sequence names only
 fi
 
 while IFS=$"," read -r primername fwd rev size; do
@@ -670,13 +841,14 @@ while IFS=$"," read -r primername fwd rev size; do
         continue
     fi
 
-    ## Phylogeny using IQtree with 100 bootsrapping rounds
+    ## Maximum likelihood phylogenetic reconstruction using IQ-TREE with bootstrap support
     mkdir -p ${output}/results/tree/${primername}/
     cp ${output}/results/haplotypes/${primername}/${primername}_aln.fasta \
         ${output}/results/tree/${primername}/${primername}
 
     conda activate ${wd}/envs/iqtree
 
+    # Run IQ-TREE with automatic model selection and 1000 bootstrap replicates
     iqtree \
         -s ${output}/results/tree/${primername}/${primername} \
         -ntmax ${threads} \
@@ -687,24 +859,25 @@ while IFS=$"," read -r primername fwd rev size; do
 
     conda activate ${wd}/envs/R
 
-    ## adjust tree height based on samples in dataset
+    ## Dynamically adjust tree plot height based on number of sequences
     if
         [[ $(($(grep "^>" ${output}/results/haplotypes/${primername}/${primername}_aln.fasta | wc -l) / 3)) -gt 8 ]] \
             ;
     then
         HEIGHT=$(($(grep "^>" ${output}/results/haplotypes/${primername}/${primername}_aln.fasta | wc -l) / 3))
     else
-        HEIGHT=8
+        HEIGHT=8  # Minimum height for readability
     fi
 
-    ## append BOLD/BLAST names if available and adjust x-axis offset to account for longer names
-    OFFSET=0.3
+    ## Integrate species names from BOLD/BLAST results if available
+    OFFSET=0.3  # Default x-axis offset for tip labels
     outgroupNew="no"
     if
         [[ ! -z ${ID} ]] \
             ;
     then
-        OFFSET=0.7
+        OFFSET=0.7  # Increased offset to accommodate longer species names
+        # Replace sequence IDs with species names in tree file
         outgroupNew=$(${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/RenameTreeLeaves.py \
             --primername ${primername} \
             --input ${output}/results/tree/${primername}/${primername}.treefile \
@@ -712,7 +885,7 @@ while IFS=$"," read -r primername fwd rev size; do
             --outgroup ${outgroup})
     fi
 
-    ## plot trees with ggplot
+    ## Generate publication-ready tree plots using R/ggplot2
     ${wd}/envs/R/bin/Rscript ${wd}/scripts/PlotTree.r \
         ${output}/results/tree/${primername}/${primername}.treefile \
         ${output}/results/tree/${primername}/${primername} \
@@ -730,7 +903,10 @@ while IFS=$"," read -r primername fwd rev size; do
 
 done <${primers}
 
-## repeat for combined FASTA data
+## Process concatenated alignment for phylogenetic reconstruction
+# Concatenated analysis provides additional phylogenetic resolution by combining
+# signal from multiple loci, with optional partitioned substitution models
+
 if
     [[ -s "${output}/results/haplotypes/Concatenated_loci/Concatenated_loci.fasta" ]] \
         ;
@@ -828,38 +1004,49 @@ then
 
 fi
 
+#===============================================================================
+# STEP 10: ASTRAL SPECIES TREE RECONSTRUCTION  
+#===============================================================================
+# Reconstruct species tree using ASTRAL (coalescent-based method):
+# - Combines individual gene trees into a species tree
+# - Accounts for incomplete lineage sorting
+# - Only performed when multiple loci are available
+# - Requires frequency threshold > 0 to ensure adequate data
+
 if [[ ${LOCI} -gt 1 && ${freqthreshold} != "0" && ${freqthreshold} != "0.0" && ${freqthreshold} != "0.00" ]]; then
-    ## now do ASTRAL concatenated trees
+    ## Create ASTRAL consensus tree from individual gene trees
     mkdir -p ${output}/results/tree/ASTRAL
 
-    ## concatenate trees
+    ## Collect all individual gene trees for species tree reconstruction
     cat ${output}/results/tree/*/*.treefile >${output}/results/astral_input.tree
     mv ${output}/results/astral_input.tree ${output}/results/tree/ASTRAL
 
-    ## test if ANY trees available in file
+    ## Verify that gene trees are available for analysis
     if [[ ! -z $(grep '[^[:space:]]' ${output}/results/tree/ASTRAL/astral_input.tree) ]]; then
 
         echo "***** reconstruct ASTRAL tree across all loci *****"
 
+        ## Calculate appropriate plot dimensions based on number of samples
         if
             [[ $(($(cat ${samples} | wc -l) / 3)) -gt 8 ]] \
                 ;
         then
             HEIGHT= $(($(cat ${samples} | wc -l) / 3))
         else
-            HEIGHT=8
+            HEIGHT=8  # Minimum height for readability
         fi
 
+        ## Set plot offset based on whether species names are available
         if
             [[ ! -z ${ID} ]] \
                 ;
         then
-            OFFSET=0.5
+            OFFSET=0.5  # Space for species names
         else
-            OFFSET=0.1
+            OFFSET=0.1  # Minimal space for sequence IDs only
         fi
 
-        ## reconstruct astral consensus tree
+        ## Reconstruct coalescent-based species tree using WASTRAL
         conda activate ${wd}/envs/aster
 
         wastral \
@@ -869,9 +1056,9 @@ if [[ ${LOCI} -gt 1 && ${freqthreshold} != "0" && ${freqthreshold} != "0.0" && $
 
         conda deactivate
 
+        ## Generate ASTRAL tree visualization
         conda activate ${wd}/envs/R
 
-        ## plot tree
         ${wd}/envs/R/bin/Rscript ${wd}/scripts/PlotTree_astral.r \
             ${output}/results/tree/ASTRAL/ASTRAL.tree \
             ${output}/results/tree/ASTRAL/ASTRAL \
@@ -889,6 +1076,17 @@ if [[ ${LOCI} -gt 1 && ${freqthreshold} != "0" && ${freqthreshold} != "0.0" && $
 
     fi
 fi
+
+#===============================================================================
+# STEP 11: SPECIES DELIMITATION WITH ASAP
+#===============================================================================  
+# Perform automatic species delimitation using ASAP (Assemble Species by 
+# Automatic Partitioning):
+# - Identifies potential species boundaries within datasets
+# - Uses multiple genetic distance thresholds
+# - Provides statistical support for delimitation hypotheses
+# - Processes both individual loci and concatenated datasets
+
 ## Species delineation with ASAP
 mkdir ${output}/log/SpecDelim
 
@@ -945,6 +1143,17 @@ then
 fi
 conda deactivate
 
+#===============================================================================
+# STEP 12: HTML REPORT GENERATION
+#===============================================================================
+# Generate comprehensive HTML report containing all pipeline results:
+# - Interactive multiple sequence alignments
+# - Phylogenetic trees with species annotations
+# - Species identification results
+# - Species delimitation outcomes  
+# - Summary statistics and data quality metrics
+# - Pipeline parameter settings and metadata
+
 ## make HTML summary
 
 mkdir -p ${output}/Output
@@ -991,6 +1200,7 @@ ${wd}/envs/python_dependencies/bin/python3 ${wd}/scripts/DisplayOutput.py \
 
 conda deactivate
 
+## Copy species identification results to final output directory
 if [[ -d ${output}/results/SpeciesID ]]; then
     for PA in ${output}/results/SpeciesID/${SE}/*; do
         IDlocus=${PA##*/}
@@ -998,7 +1208,7 @@ if [[ -d ${output}/results/SpeciesID ]]; then
     done
 fi
 
-## copy haplotypes to Output folder
+## Copy final haplotype alignments to output directory for user access
 while IFS=$"," read -r primername fwd rev size; do
 
     ## skip header
@@ -1021,8 +1231,28 @@ while IFS=$"," read -r primername fwd rev size; do
 
 done <${primers}
 
+## Clean up temporary R plot files
 rm -f ${output}/results/haplotypes/Rplots.pdf
 rm -f ${output}/Output/haplotypes/Rplots.pdf
+
+#===============================================================================
+# PIPELINE COMPLETION
+#===============================================================================
+# The AmpliPiper pipeline has completed successfully!
+# 
+# MAIN OUTPUTS:
+# - ${output}/Output/: Final results directory containing:
+#   * index.html: Interactive HTML report with all results
+#   * haplotypes/: Aligned consensus sequences for each locus  
+#   * summary/: Summary statistics and species identification results
+#   * trees/: Phylogenetic trees in multiple formats (PDF, SVG, Newick)
+#   * species_delimitation/: ASAP species delimitation results
+# 
+# - ${output}/results/: Detailed intermediate results from each analysis step
+# - ${output}/log/: Log files for troubleshooting and quality control
+#
+# For questions or issues, please refer to the pipeline documentation or
+# contact the development team.
 
 ## Finished
 now=$(date +%Y-%m-%d' '%H:%M:%S)

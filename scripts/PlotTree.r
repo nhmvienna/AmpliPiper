@@ -48,6 +48,8 @@ if (watermark == "YES") {
     ggtitle(title) +
     theme_tree2() +
     theme_bw() +
+    geom_rootpoint(size = 2, color = "#21614a") +
+    geom_rootedge(size = 0.5, color = "#21614a") +
     ggplot2::xlim(0, Xmax + Xmax * offset) +
     xlab("av. subst./site") +
     geom_nodelab(
@@ -83,6 +85,8 @@ if (watermark == "YES") {
   PLOT.tree <- ggtree(tree, layout = "roundrect") +
     ggtitle(title) +
     theme_tree2() +
+    geom_rootpoint(size = 2, color = "#21614a") +
+    geom_rootedge(linewidth = 0.5, color = "#21614a") +
     theme_bw() +
     ggplot2::xlim(0, Xmax + Xmax * offset) +
     xlab("av. subst./site") +

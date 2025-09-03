@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 import gzip
 import os
 from collections import defaultdict as d
+from Bio.Blast import NCBIWWW as Blast
 
 
 def parse_arguments():
@@ -64,82 +65,83 @@ def get_taxonomy_id(hit_id):
 
 
 def run_blast_and_save_results(infile, outfile):
-    """Run BLAST for sequences in the input file and save results to the output file."""
+    """Run BLAST for sequences in the input file in chunks of 20 and save results to the output file."""
     print("Loading data...")
-    print("Data loaded successfully.")
+    sequences = list(SeqIO.parse(infile, "fasta"))
+    print(f"Data loaded successfully: {len(sequences)} sequences.")
 
     result_file_path = os.path.join(outfile)
-
-    print("Starting BLAST for full sequence")
-    result_handle = Blast.qblast("blastn", "nt", open(infile).read())
-
     data = d(lambda: d(list))
 
-    blast_full = NCBIXML.parse(result_handle)
-    with open(result_file_path, "a") as result_file:
-        print("Parsing BLAST results")
+    # Process sequences in chunks of 20
+    chunk_size = 20
+    for i in range(0, len(sequences), chunk_size):
+        chunk = sequences[i:i + chunk_size]
+        print(f"Starting BLAST for sequences {i+1} to {i+len(chunk)}")
+
+        # Convert chunk to FASTA string
+        fasta_str = "".join(seq.format("fasta") for seq in chunk)
+
+        # Run BLAST for this chunk
+        result_handle = Blast.qblast("blastn", "nt", fasta_str)
+
+        # Parse BLAST results
+        print("Parsing BLAST results for this chunk")
+        blast_full = NCBIXML.parse(result_handle)
         for blast_record in blast_full:
             C = 1
             for alignment in blast_record.alignments:
-                # only use 10 best Hits
                 if C > 10:
                     break
                 C += 1
-                # get the taxonomic information for the hit using NCBI Entrez
                 taxonomy_id = get_taxonomy_id(alignment.hit_id)
                 HSP = []
                 for hsp in alignment.hsps:
                     perc_identity = 100 * \
                         round(hsp.identities / hsp.align_length, 4)
                     HSP.append(perc_identity)
-                data[blast_record.query][taxonomy_id].append(max(HSP))
+                if HSP:
+                    data[blast_record.query][taxonomy_id].append(max(HSP))
+        result_handle.close()
 
-    result_handle.close()
-    print("Finished parsing results")
+        print("Chunk finished, sleeping 10s to respect NCBI rate limits...")
+        time.sleep(10)
+
+    print("Finished parsing results for all chunks")
     print("Writing BLAST results")
 
-    result_file = open(result_file_path, "w")
-    # Processing data to count occurrences and find the highest percentage for each result
-    result_dict = {}
-    for test, results in data.items():
-        result_dict[test] = {}
-        for result, percentages in results.items():
-            count = len(percentages)
-            highest_percentage = round(max(percentages), 2)
-            result_dict[test][result] = {
-                'count': count,
-                'highest_percentage': highest_percentage
-            }
+    with open(result_file_path, "w") as result_file:
+        result_dict = {}
+        for test, results in data.items():
+            result_dict[test] = {}
+            for result, percentages in results.items():
+                count = len(percentages)
+                highest_percentage = round(max(percentages), 2)
+                result_dict[test][result] = {
+                    'count': count,
+                    'highest_percentage': highest_percentage
+                }
 
-    # Find the maximum number of results across all tests for formatting
-    max_results_per_test = max(len(results)
-                               for results in result_dict.values())
+        # Find max number of results per test
+        max_results_per_test = max(len(results)
+                                   for results in result_dict.values())
 
-    # Print header
-    header = ["SAMPLE"] + \
-        [f"Taxon{i + 1} (sim%)" for i in range(max_results_per_test)]
-    result_file.write(",".join(header) + "\n")
+        # Print header
+        header = ["SAMPLE"] + \
+            [f"Taxon{i+1} (sim%)" for i in range(max_results_per_test)]
+        result_file.write(",".join(header) + "\n")
 
-    # Print results for each test
-    for test, results in result_dict.items():
-        sorted_results = sorted(
-            results.items(), key=lambda x: x[1]['highest_percentage'], reverse=True)
-        row = [test]  # Start row with the test/sample name
-        for i, (result, info) in enumerate(sorted_results):
-            # Create the formatted string for each result
-            entry = f"{result} ({info['highest_percentage']}%); count = {info['count']}"
-            row.append(entry)
+        # Print results per sequence
+        for test, results in result_dict.items():
+            sorted_results = sorted(
+                results.items(), key=lambda x: x[1]['highest_percentage'], reverse=True)
+            row = [test]
+            for result, info in sorted_results:
+                entry = f"{result} ({info['highest_percentage']}%); count={info['count']}"
+                row.append(entry)
+            row += [""] * (max_results_per_test - len(sorted_results))
+            result_file.write(",".join(row) + "\n")
 
-        # Fill the rest of the row with empty columns if needed
-        row += [""] * (max_results_per_test - len(sorted_results))
-
-        # Join the row without adding a comma after the last entry
-        formatted_row = ",".join(row)
-
-        # Write the formatted row to the file
-        result_file.write(formatted_row + "\n")
-
-    result_file.close()
     print("Finished writing results")
 
 

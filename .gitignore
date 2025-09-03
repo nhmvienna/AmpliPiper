@@ -7,5 +7,6 @@
 /scripts/display_new.py
 /scripts/altersvg_old.py
 #/testdata/main.sh
+/testdata/.params
 .DS_Store
 /simulations/results
