@@ -503,6 +503,10 @@ LOCI=$(awk '!/^ID,/' ${primers} | wc -l)
 #
 # This step generates individual shell scripts for each sample to enable 
 # parallel processing across multiple samples simultaneously.
+# The advanced demultiplexing script allows for:
+# - Identify potential chimeras consisting in multiple amplicons in one read 
+# - First-amplicon-only retention to avoid chimeras
+# - Size range filtering based on expected amplicon length 
 
 ## Process all input files: copy, filter, and demultiplex by locus
 echo "***** Copying files, starting filtering and demultiplexing by locus *****"
@@ -554,6 +558,7 @@ while IFS=$"," read -r samplename file; do
         -o ${output}/data/demultiplexed/${samplename} \
         -th ${kthres} \
         -sr ${sizerange} \
+        --first-amplicon-only \
         -mr ${minreads} \
         -rp ${nreads} >> ${output}/log/demulti/${samplename}_demulti.log 2>&1
     conda deactivate

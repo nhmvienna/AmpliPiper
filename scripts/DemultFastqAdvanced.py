@@ -7,6 +7,7 @@ This enhanced version of DemultFastq.py can:
 1. Detect primer pairs anywhere in the read (not just at the ends)
 2. Identify multiple amplicons within a single read
 3. Split reads containing multiple amplicons into separate sequences
+4. Option to use only the first amplicon when multiple hits are found
 
 Author: AmpliPiper development team
 Date: August 2025
@@ -41,6 +42,8 @@ argparse.add_argument(
 argparse.add_argument(
     "--disable-split-multi", help="Disable multi-amplicon splitting (for legacy compatibility)", action="store_true", default=False)
 argparse.add_argument(
+    "--first-amplicon-only", help="When multiple amplicons are found in a read, only use the first one instead of splitting", action="store_true", default=False)
+argparse.add_argument(
     "--min-amplicon-length", help="Minimum length for split amplicons", type=int, default=100)
 argparse.add_argument(
     "--threads", help="Number of threads to use for processing", type=int, default=1)
@@ -53,6 +56,7 @@ readper = args.reads_percentage
 sizerange = args.sizerange
 minreads = args.minreads
 split_multi = not args.disable_split_multi
+first_amplicon_only = args.first_amplicon_only
 min_amplicon_length = args.min_amplicon_length
 threads = args.threads
 
@@ -274,7 +278,7 @@ def find_amplicons_in_read_fast(sequence, primer_dict, TH, expected_size, size_t
     return []
 
 
-def demultiplex_multi_amplicon(sequences_dict, primer_dict, TH, sizerange, split_multi, min_amplicon_length):
+def demultiplex_multi_amplicon(sequences_dict, primer_dict, TH, sizerange, split_multi, first_amplicon_only, min_amplicon_length):
     """Advanced demultiplexing with multi-amplicon detection and splitting"""
     demultiplexed = d(list)
     multi_amplicon_stats = d(int)
@@ -313,7 +317,7 @@ def demultiplex_multi_amplicon(sequences_dict, primer_dict, TH, sizerange, split
                 'avg_quality': avg_quality
             })
 
-        if split_multi and len(all_amplicons) > 1:
+        if split_multi and len(all_amplicons) > 1 and not first_amplicon_only:
             # Split multi-amplicon reads
             for i, amplicon in enumerate(all_amplicons):
                 # Create new sequence ID for split amplicon
@@ -427,11 +431,13 @@ def demultiplex_advanced(infile, csv):
             sequences_dict, primer_dict, TH, sizerange)
     else:
         print(f"Using advanced multi-amplicon algorithm with splitting enabled", file=sys.stderr)
+        if first_amplicon_only:
+            print(f"  First amplicon only mode: enabled (will only use first amplicon from multi-hit reads)", file=sys.stderr)
         print(f"  Min amplicon length: {min_amplicon_length}", file=sys.stderr)
 
         # Use advanced algorithm with multi-amplicon detection
         demultiplexed, multi_amplicon_details = demultiplex_multi_amplicon(
-            sequences_dict, primer_dict, TH, sizerange, split_multi, min_amplicon_length)
+            sequences_dict, primer_dict, TH, sizerange, split_multi, first_amplicon_only, min_amplicon_length)
 
     # Print results summary
     total_matches = sum(len(v) for v in demultiplexed.values())

@@ -472,6 +472,7 @@ while IFS=$"," read -r samplename file; do
         -o ${output}/data/demultiplexed/${samplename} \
         -th ${kthres} \
         -sr ${sizerange} \
+        --first-amplicon-only \
         -mr ${minreads} \
         -rp ${nreads} >> ${output}/log/demulti/${samplename}_demulti.log 2>&1
     conda deactivate
